@@ -1,6 +1,6 @@
 # app.py
 # ============================
-# ACA-1095 Builder — Streamlit App (with simple login + Line 15 + Part III)
+# ACA-1095 Builder — Streamlit App (login + defaults for L15 & Part III)
 # ============================
 
 import io
@@ -26,7 +26,6 @@ st.set_page_config(page_title="ACA-1095 Builder", layout="wide")
 USERS = {
     "admin": "admin123",
     "hr": "hrpass456",
-    # add more: "username": "password"
 }
 
 if "logged_in" not in st.session_state:
@@ -61,6 +60,36 @@ if not st.session_state.logged_in:
 st.sidebar.success(f"Logged in as {st.session_state.username}")
 logout_button()
 st.title("ACA-1095 Builder")
+
+# =========================
+# Defaults & Controls (Sidebar)
+# =========================
+with st.sidebar.expander("Defaults & Inference"):
+    # Line 15 defaults
+    default_l15_amount = st.number_input(
+        "Default Line 15 amount (if required but missing)",
+        min_value=0.00, step=1.00, value=0.00, format="%.2f",
+        help="Used when Line 14 requires Line 15 but no pay deduction amount is found."
+    )
+    collapse_l15_all12 = st.checkbox(
+        "Collapse Line 15 to 'All 12' if uniform",
+        value=True
+    )
+
+    # Part III defaults
+    infer_part3_from_l16 = st.checkbox(
+        "Infer Part III coverage from Line 16 = 2C when enrollment is missing",
+        value=True
+    )
+    part3_include_emp_when_empty = st.checkbox(
+        "If still nothing, include EMPLOYEE in Part III using default",
+        value=False
+    )
+    part3_default_emp_all12 = st.checkbox(
+        "Default Employee coverage = All 12 (when forced include above is ON)",
+        value=True,
+        help="If not checked, no months will be marked when forced include happens."
+    )
 
 # =========================
 # Utility helpers
@@ -339,19 +368,15 @@ def normalize_ssn_digits(ssn: str) -> str:
     return f"{d[0:3]}-{d[3:5]}-{d[5:9]}" if len(d)>=9 else d
 
 # IRS 1095-C 2024 field names (page 1):
-# Part I
 F_PART1 = ["f1_1[0]","f1_2[0]","f1_3[0]","f1_4[0]","f1_5[0]","f1_6[0]","f1_7[0]","f1_8[0]"]
-# Line 14 (All 12 + Jan..Dec)
 F_L14 = ["f1_17[0]","f1_18[0]","f1_19[0]","f1_20[0]","f1_21[0]","f1_22[0]","f1_23[0]",
          "f1_24[0]","f1_25[0]","f1_26[0]","f1_27[0]","f1_28[0]","f1_29[0]"]
-# Line 16 (All 12 + Jan..Dec)
 F_L16 = ["f1_43[0]","f1_44[0]","f1_45[0]","f1_46[0]","f1_47[0]","f1_48[0]","f1_49[0]",
          "f1_50[0]","f1_51[0]","f1_52[0]","f1_53[0]","f1_54[0]","f1_55[0]"]
 # NEW: Line 15 (All 12 + Jan..Dec) — adjust if your PDF uses different ids
 F_L15 = [f"f1_{i}[0]" for i in range(30, 43)]  # f1_30 .. f1_42
 
-# ---- Part III (Page 3): name fields & checkboxes
-# Each row: [First, MI, Last, SSN/TIN, DOB]
+# Part III (page 3): names + checkboxes
 P3_NAME_ROWS = [
     ["f3_61[0]","f3_62[0]","f3_63[0]","f3_64[0]","f3_65[0]"],   # row 18
     ["f3_66[0]","f3_67[0]","f3_68[0]","f3_69[0]","f3_70[0]"],   # row 19
@@ -364,22 +389,11 @@ P3_NAME_ROWS = [
     ["f3_107[0]","f3_108[0]","f3_109[0]","f3_110[0]","f3_111[0]"], # row 26
     ["f3_113[0]","f3_114[0]","f3_115[0]","f3_116[0]","f3_117[0]"], # row 27
     ["f3_118[0]","f3_119[0]","f3_120[0]","f3_121[0]","f3_122[0]"], # row 28
-    # extend for rows 29–30 if needed
 ]
-
 def _seq(a,b): return [f"c3_{i}" for i in range(a,b+1)]
 P3_CHECK_ROWS = [
-    _seq(16, 28),   # row 18: [All 12, Jan..Dec] (13 boxes)
-    _seq(29, 41),   # row 19
-    _seq(42, 54),   # row 20
-    _seq(55, 67),   # row 21
-    _seq(68, 80),   # row 22
-    _seq(81, 93),   # row 23
-    _seq(94, 106),  # row 24
-    _seq(107,119),  # row 25
-    _seq(120,132),  # row 26
-    _seq(133,145),  # row 27
-    _seq(146,158),  # row 28
+    _seq(16, 28), _seq(29, 41), _seq(42, 54), _seq(55, 67), _seq(68, 80),
+    _seq(81, 93), _seq(94, 106), _seq(107,119), _seq(120,132), _seq(133,145), _seq(146,158),
 ]
 
 def set_need_appearances(writer: PdfWriter):
@@ -445,7 +459,7 @@ def flatten_pdf(reader: PdfReader):
         del out._root_object[NameObject("/AcroForm")]
     return out
 
-# ======== Line 15 + Part III helpers ========
+# ======== Line 15 + Part III helpers with defaults ========
 L15_REQUIRED_CODES = {"1B","1C","1D","1E","1J","1K","1L","1M","1N","1O","1P","1Q","1T","1U"}
 
 def _fmt_money(x):
@@ -461,11 +475,12 @@ def _overlaps_month(s, e, y, m):
     e = e if not pd.isna(e) else pd.Timestamp.max
     return (e.date() >= ms) and (s.date() <= me)
 
-def compute_l15_for_employee(emp_id: str, year_used: int, final_emp_df: pd.DataFrame, pay_ded_df: pd.DataFrame) -> dict:
+def compute_l15_for_employee(emp_id: str, year_used: int, final_emp_df: pd.DataFrame, pay_ded_df: pd.DataFrame,
+                             default_amount: float = 0.00, collapse_all12: bool = True) -> dict:
     """
     Returns {"Jan":"12.34", ..., "Dec":"", "ALL": ""}.
-    Uses pay_deductions.amount as EE self-only cost for months overlapping start/end.
-    If Line 14 needs an amount but none exists, uses "0.00".
+    Uses pay_deductions.amount as EE self-only cost for overlapping months.
+    If Line 14 needs an amount but none exists, uses provided default_amount.
     """
     l14_map = {r["Month"]: str(r["Line14_Final"]).strip() for _, r in final_emp_df.iterrows()}
     out = {}
@@ -481,20 +496,29 @@ def compute_l15_for_employee(emp_id: str, year_used: int, final_emp_df: pd.DataF
                 if _overlaps_month(rr.get("startdate"), rr.get("enddate"), year_used, idx):
                     amt = rr.get("amount")
                     if pd.notna(amt): break
-        out[mname] = _fmt_money(amt if pd.notna(amt) else 0.00)
+        use_amt = default_amount if (amt is None or pd.isna(amt)) else amt
+        out[mname] = _fmt_money(use_amt)
+
     uniq = {v for v in out.values() if v != ""}
-    out["ALL"] = list(uniq)[0] if len(uniq)==1 else ""
+    out["ALL"] = (list(uniq)[0] if len(uniq)==1 else "") if collapse_all12 else ""
     if out["ALL"]:
         for mname in MONTHS: out[mname] = ""
     return out
 
 def build_part3_people(emp_row: pd.Series,
                        year_used: int,
+                       final_emp_df: pd.DataFrame,
                        emp_enroll_df: pd.DataFrame,
-                       dep_enroll_df: pd.DataFrame) -> list:
+                       dep_enroll_df: pd.DataFrame,
+                       infer_from_l16_2c: bool = True,
+                       force_include_emp: bool = False,
+                       default_emp_all12: bool = True) -> list:
     """
-    Returns a list:
-    [{"first":..,"mi":..,"last":..,"ssn":..,"dob":..,"all12":bool,"months":{1,2,...}}, ...]
+    Returns [{"first","mi","last","ssn","dob","all12", "months"}...]
+    Priority:
+      1) Use enrollment overlap (employee & dependents).
+      2) If none and infer_from_l16_2c: mark months where Line16 = '2C'.
+      3) If still none and force_include_emp: include employee with default_emp_all12.
     """
     people = []
 
@@ -516,22 +540,36 @@ def build_part3_people(emp_row: pd.Series,
                     months_cov.add(m)
         return months_cov
 
-    # Employee line based on Emp Enrollment overlap
+    # 1) Employee months from enrollment
+    emp_months = set()
     if emp_enroll_df is not None and not emp_enroll_df.empty:
         subset = emp_enroll_df[emp_enroll_df["employeeid"].astype(str)==str(emp_row.get("employeeid"))]
         emp_months = months_from_periods(subset)
-        if emp_months:
-            people.append({
-                "first": _coerce_str(emp_row.get("firstname")),
-                "mi":    "",
-                "last":  _coerce_str(emp_row.get("lastname")),
-                "ssn":   normalize_ssn_digits(_coerce_str(emp_row.get("ssn"))),
-                "dob":   "",
-                "all12": len(emp_months)==12,
-                "months": emp_months
-            })
 
-    # Dependents (optional; only if names exist)
+    # 2) If none, infer from Line 16 = 2C
+    if not emp_months and infer_from_l16_2c and final_emp_df is not None and not final_emp_df.empty:
+        for idx, mname in enumerate(MONTHS, start=1):
+            v = str(final_emp_df[final_emp_df["Month"]==mname]["Line16_Final"].iloc[0]) if not final_emp_df[final_emp_df["Month"]==mname].empty else ""
+            if v == "2C":
+                emp_months.add(idx)
+
+    # 3) If still none, possibly force include with default
+    if not emp_months and force_include_emp:
+        emp_months = set(range(1,13)) if default_emp_all12 else set()
+
+    # Add employee if any months or forced include triggered
+    if emp_months or force_include_emp:
+        people.append({
+            "first": _coerce_str(emp_row.get("firstname")),
+            "mi":    "",
+            "last":  _coerce_str(emp_row.get("lastname")),
+            "ssn":   normalize_ssn_digits(_coerce_str(emp_row.get("ssn"))),
+            "dob":   "",
+            "all12": len(emp_months)==12,
+            "months": emp_months
+        })
+
+    # Dependents (names must exist)
     if dep_enroll_df is not None and not dep_enroll_df.empty:
         fn_col = next((c for c in dep_enroll_df.columns if c.lower() in {"firstname","first"}), None)
         ln_col = next((c for c in dep_enroll_df.columns if c.lower() in {"lastname","last"}), None)
@@ -541,8 +579,8 @@ def build_part3_people(emp_row: pd.Series,
 
         deps = dep_enroll_df[dep_enroll_df["employeeid"].astype(str)==str(emp_row.get("employeeid"))]
         for _, r in deps.iterrows():
+            # months by any elig/enrolled overlap
             mset = months_from_periods(pd.DataFrame([r]))
-            if not mset: continue
             first = _coerce_str(r.get(fn_col)) if fn_col else ""
             last  = _coerce_str(r.get(ln_col)) if ln_col else ""
             if not first and not last:
@@ -571,7 +609,7 @@ def fill_pdf_for_employee(pdf_bytes: bytes,
     page0 = reader.pages[0]
     W = float(page0.mediabox.width); H = float(page0.mediabox.height)
 
-    # ---- Part I values
+    # ---- Part I
     first  = _coerce_str(emp_row.get("firstname"))
     mi     = ""
     last   = _coerce_str(emp_row.get("lastname"))
@@ -594,7 +632,7 @@ def fill_pdf_for_employee(pdf_bytes: bytes,
         "f1_8[0]": zipcode,
     }
 
-    # ---- Part II codes (Line 14 & 16)
+    # ---- Line 14 & 16
     l14_by_m = {row["Month"]: _coerce_str(row["Line14_Final"]) for _,row in final_df_emp.iterrows()}
     l16_by_m = {row["Month"]: _coerce_str(row["Line16_Final"]) for _,row in final_df_emp.iterrows()}
 
@@ -612,41 +650,45 @@ def fill_pdf_for_employee(pdf_bytes: bytes,
     for name,val in zip(F_L14, l14_values): part2_map[name]=val
     for name,val in zip(F_L16, l16_values): part2_map[name]=val
 
-    # ---- NEW: Line 15 amounts
-    l15_map = {}
+    # ---- Line 15 with defaults
     try:
         l15_map = compute_l15_for_employee(
             emp_id=_coerce_str(emp_row.get("employeeid")),
             year_used=year_used,
             final_emp_df=final_df_emp,
-            pay_ded_df=pay_ded_df if pay_ded_df is not None else pd.DataFrame()
+            pay_ded_df=pay_ded_df if pay_ded_df is not None else pd.DataFrame(),
+            default_amount=default_l15_amount,
+            collapse_all12=collapse_l15_all12
         )
         l15_values = [l15_map.get("ALL","")] + [l15_map.get(m,"") for m in MONTHS]
         for name, val in zip(F_L15, l15_values): part2_map[name] = val
     except Exception:
-        # If your PDF uses different field names, this safely skips Line 15
-        pass
+        pass  # skip if IDs don't match this PDF
 
-    # ---- NEW: Part III (Covered Individuals)
+    # ---- Part III with defaults/inference
     part3_map = {}
     try:
-        people = build_part3_people(emp_row, year_used, emp_enroll_df, dep_enroll_df)
+        people = build_part3_people(
+            emp_row, year_used, final_df_emp,
+            emp_enroll_df, dep_enroll_df,
+            infer_from_l16_2c=infer_part3_from_l16,
+            force_include_emp=part3_include_emp_when_empty,
+            default_emp_all12=part3_default_emp_all12
+        )
         for idx, person in enumerate(people[:len(P3_NAME_ROWS)]):
             nfields = P3_NAME_ROWS[idx]
-            tfields = {
+            part3_map.update({
                 nfields[0]: person["first"],
                 nfields[1]: person["mi"],
                 nfields[2]: person["last"],
                 nfields[3]: person["ssn"],
                 nfields[4]: person["dob"],
-            }
-            part3_map.update(tfields)
+            })
             checks = P3_CHECK_ROWS[idx]
             cvals = [person["all12"]] + [ (m in person["months"]) for m in range(1,13) ]
             for nm, val in zip(checks, cvals):
                 part3_map[nm] = bool(val)
     except Exception:
-        # If field IDs differ, skip quietly
         pass
 
     # ---- EDITABLE output
@@ -660,7 +702,6 @@ def fill_pdf_for_employee(pdf_bytes: bytes,
         except Exception:
             pass
 
-    # NeedAppearances + text overlay on page 1 to ensure visibility
     root = writer_edit._root_object
     if "/AcroForm" not in root:
         root.update({NameObject("/AcroForm"): DictionaryObject()})
@@ -669,7 +710,7 @@ def fill_pdf_for_employee(pdf_bytes: bytes,
     rects = find_rects(reader, list({**part1_map, **part2_map}.keys()), page_index=0)
     overlay_pairs = [(rects[nm], (part1_map|part2_map)[nm]) for nm in (part1_map|part2_map) if nm in rects and (part1_map|part2_map)[nm]]
     if overlay_pairs:
-        overlay_pdf = build_overlay(W, H, overlay_pairs)
+        overlay_pdf = build_overlay(float(page0.mediabox.width), float(page0.mediabox.height), overlay_pairs)
         writer_edit.pages[0].merge_page(overlay_pdf.pages[0])
 
     first_last = f"{first}_{last}".strip().replace(" ","_") or (_coerce_str(emp_row.get("employeeid")) or "employee")
@@ -729,7 +770,6 @@ if excel_file is not None:
             st.markdown("**Final Table (preview)**")
             st.dataframe(final_df.head(200), use_container_width=True)
 
-        # Download combined Excel
         excel_bytes = save_excel_outputs(interim_df, final_df, year_used)
         st.download_button(
             label=f"Download Final & Interim Excel ({year_used})",
