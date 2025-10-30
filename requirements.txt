@@ -1,9 +1,5 @@
-streamlit
-pandas
-numpy
-openpyxl
-xlsxwriter
-PyPDF2
-reportlab
-streamlit-authenticator
-
+streamlit>=1.37
+pandas>=2.1
+openpyxl>=3.1
+xlsxwriter>=3.2
+PyPDF2>=3.0
