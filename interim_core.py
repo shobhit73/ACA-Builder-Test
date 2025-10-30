@@ -16,21 +16,16 @@ def build_interim_from_excel(
     exclude_waived: bool = True,
 ) -> pd.DataFrame:
     """
-    Reimplements your posted logic with minimal guardrails.
-    Input: raw bytes of your 'Input Data Sample Updated.xlsx'
-    Output: interim dataframe (same columns/flags as your code).
+    Build the interim table exactly as in your snippet, with small guardrails.
     """
-    # === Load sheets from in-memory bytes ===
     xls = pd.ExcelFile(io.BytesIO(excel_bytes))
     demographic_df = pd.read_excel(xls, sheet_name=demo_sheet)
     eligibility_df = pd.read_excel(xls, sheet_name=elig_sheet)
     enrollment_df = pd.read_excel(xls, sheet_name=enr_sheet)
 
-    # === Clean and normalize column names ===
     for df in [demographic_df, eligibility_df, enrollment_df]:
         df.columns = df.columns.str.strip().str.replace(" ", "_")
 
-    # Coerce key date columns to datetime (robust for real data)
     for col in ["StatusStartDate", "StatusEndDate"]:
         if col in demographic_df.columns:
             demographic_df[col] = _safe_to_datetime(demographic_df[col])
@@ -43,8 +38,7 @@ def build_interim_from_excel(
         if col in enrollment_df.columns:
             enrollment_df[col] = _safe_to_datetime(enrollment_df[col])
 
-    # Fill open-ended end-dates so "full month" checks work
-    far_future = pd.Timestamp("2262-04-11")  # pandas max-ish
+    far_future = pd.Timestamp("2262-04-11")
     if "StatusEndDate" in demographic_df.columns:
         demographic_df["StatusEndDate"] = demographic_df["StatusEndDate"].fillna(far_future)
     if "EligibilityEndDate" in eligibility_df.columns:
@@ -52,29 +46,24 @@ def build_interim_from_excel(
     if "EnrollmentEndDate" in enrollment_df.columns:
         enrollment_df["EnrollmentEndDate"] = enrollment_df["EnrollmentEndDate"].fillna(far_future)
 
-    # === Remove waived rows (optional) ===
     if exclude_waived:
         if "EligiblePlan" in eligibility_df.columns:
             eligibility_df = eligibility_df[~eligibility_df["EligiblePlan"].astype(str).str.contains("Waive", case=False, na=False)]
         if "PlanCode" in enrollment_df.columns:
             enrollment_df = enrollment_df[~enrollment_df["PlanCode"].astype(str).str.contains("Waive", case=False, na=False)]
 
-    # === Extract relevant employee demographic fields ===
     emp_df = demographic_df[[
         "EmployeeID", "FirstName", "MiddleInitial", "LastName",
         "Role", "StatusStartDate", "StatusEndDate"
     ]].copy()
 
-    # === Build Full Name ===
     emp_df["Name"] = (
         emp_df["FirstName"].fillna("") + " " +
         emp_df["MiddleInitial"].fillna("") + " " +
         emp_df["LastName"].fillna("")
     ).str.replace("  ", " ").str.strip()
 
-    # === Create month range for selected year ===
     months = pd.date_range(start=f"{year}-01-01", end=f"{year}-12-31", freq="MS")
-
     records = []
 
     for _, emp in emp_df.iterrows():
@@ -85,7 +74,6 @@ def build_interim_from_excel(
             is_full_time = emp["Role"] == "FT" and employed_full_month
             is_part_time = emp["Role"] == "PT" and employed_full_month
 
-            # === Filters for this employee/month ===
             elig_rows = eligibility_df[
                 (eligibility_df["EmployeeID"] == emp["EmployeeID"]) &
                 (eligibility_df["EligibilityStartDate"] <= month_end) &
@@ -98,7 +86,6 @@ def build_interim_from_excel(
                 (enrollment_df["EnrollmentEndDate"] >= month_start)
             ]
 
-            # === Eligibility Flags ===
             eligible_mv = False
             employee_eligible = False
             spouse_eligible = False
@@ -117,14 +104,12 @@ def build_interim_from_excel(
                 if "EMPFAM" in all_tiers:
                     child_eligible = True
 
-            # === Enrollment Flags ===
             employee_enrolled = False
             spouse_enrolled = False
             child_enrolled = False
 
             if not enroll_rows.empty:
                 all_tiers_enr = set(enroll_rows["Tier"].dropna().astype(str))
-
                 if all_tiers_enr.intersection({"EMP", "EMPFAM", "EMPSPOUSE"}):
                     employee_enrolled = True
                 if all_tiers_enr.intersection({"EMPFAM", "EMPSPOUSE"}):
